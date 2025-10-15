@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
+import os
 
 
 def load_subtensor(g, seeds, input_nodes, device, load_feat=True):
@@ -294,6 +295,7 @@ def main(args):
     print(socket.gethostname(), "Initializing DGL dist")
     dgl.distributed.initialize(args.ip_config, net_type=args.net_type)
     if not args.standalone:
+        os.environ['GLOO_SOCKET_IFNAME'] = 'ens5f0'
         print(socket.gethostname(), "Initializing DGL process group")
         th.distributed.init_process_group(backend=args.backend)
     print(socket.gethostname(), "Initializing DistGraph")
@@ -347,8 +349,9 @@ def main(args):
     if args.num_gpus == -1:
         device = th.device("cpu")
     else:
-        dev_id = g.rank() % args.num_gpus
+        dev_id = th.distributed.get_rank() % args.num_gpus
         device = th.device("cuda:" + str(dev_id))
+        print("cuda:"+str(dev_id))
     n_classes = args.n_classes
     if n_classes == 0:
         labels = g.ndata["labels"][np.arange(g.num_nodes())]

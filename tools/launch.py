@@ -704,6 +704,7 @@ def submit_jobs(args, udf_command, dry_run=False):
 
     # return commands of clients/servers directly if in dry run mode
     if dry_run:
+        print(clients_cmd)
         return clients_cmd, servers_cmd
 
     # Start a cleanup process dedicated for cleaning up remote training jobs.

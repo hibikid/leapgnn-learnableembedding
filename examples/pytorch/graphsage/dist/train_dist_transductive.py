@@ -9,6 +9,8 @@ import torch.optim as optim
 import dgl
 from dgl.distributed import DistEmbedding
 from train_dist import DistSAGE, compute_acc
+from local_emboptimizer import SparseAdam
+import os
 
 
 def initializer(shape, dtype):
@@ -141,7 +143,7 @@ def run(args, device, data):
         if args.num_gpus == -1:
             model = th.nn.parallel.DistributedDataParallel(model)
         else:
-            dev_id = g.rank() % args.num_gpus
+            dev_id = th.distributed.get_rank() % args.num_gpus
             model = th.nn.parallel.DistributedDataParallel(
                 model, device_ids=[dev_id], output_device=dev_id
             )
@@ -151,7 +153,10 @@ def run(args, device, data):
     loss_fcn = loss_fcn.to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     if args.dgl_sparse:
-        emb_optimizer = dgl.distributed.optim.SparseAdam(
+        # emb_optimizer = dgl.distributed.optim.SparseAdam(
+        #     [emb_layer.sparse_emb], lr=args.sparse_lr
+        # )
+        emb_optimizer = SparseAdam(
             [emb_layer.sparse_emb], lr=args.sparse_lr
         )
         print("optimize DGL sparse embedding:", emb_layer.sparse_emb)
@@ -206,7 +211,7 @@ def run(args, device, data):
                 forward_time += forward_end - start
                 backward_time += compute_end - forward_end
 
-                emb_optimizer.step()
+                emb_optimizer.step(args.num_gpus)
                 optimizer.step()
                 update_time += time.time() - compute_end
 
@@ -277,7 +282,9 @@ def run(args, device, data):
 def main(args):
     dgl.distributed.initialize(args.ip_config)
     if not args.standalone:
-        th.distributed.init_process_group(backend="gloo")
+        os.environ['NCCL_SOCKET_IFNAME'] = 'ens5f0'
+        os.environ['NCCL_IB_DISABLE'] = '1'
+        th.distributed.init_process_group(backend="nccl")
     g = dgl.distributed.DistGraph(
             args.graph_name,
             part_config=args.part_config
@@ -310,8 +317,9 @@ def main(args):
     if args.num_gpus == -1:
         device = th.device("cpu")
     else:
-        dev_id = g.rank() % args.num_gpus
+        dev_id = th.distributed.get_rank() % args.num_gpus
         device = th.device("cuda:" + str(dev_id))
+        print("cuda:"+str(dev_id))
     labels = g.ndata["labels"][np.arange(g.num_nodes())]
     n_classes = len(th.unique(labels[th.logical_not(th.isnan(labels))]))
     print("#labels:", n_classes)
@@ -345,8 +353,8 @@ if __name__ == "__main__":
     parser.add_argument("--fan_out", type=str, default="10,25")
     parser.add_argument("--batch_size", type=int, default=1000)
     parser.add_argument("--batch_size_eval", type=int, default=100000)
-    parser.add_argument("--log_every", type=int, default=20)
-    parser.add_argument("--eval_every", type=int, default=5)
+    parser.add_argument("--log_every", type=int, default=5)
+    parser.add_argument("--eval_every", type=int, default=20)
     parser.add_argument("--lr", type=float, default=0.003)
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument(
